@@ -1,6 +1,4 @@
-# NEVER commit credentials
-.env
-
+# Private repo — .env is tracked intentionally
 # Python
 __pycache__/
 *.py[cod]
