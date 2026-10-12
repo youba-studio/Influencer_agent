@@ -1,0 +1,39 @@
+{
+  "pipeline_name": "Wan2.1_I2V_plus_ReActor_InsightFace",
+  "version": "2.1.0",
+  "cloud_runtime_requirements": {
+    "accelerator": "NVIDIA GPU (>= 16GB VRAM, e.g. T4 / P100 / A100)",
+    "framework": "PyTorch 2.x, Diffusers, ONNX Runtime GPU",
+    "hf_token": "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"
+  },
+  "stage_1_motion_generation": {
+    "model_id": "Wan-AI/Wan2.1-I2V-14B-720P",
+    "input_image": "assets/dress/lakdata_Women_Tiered_Pur_hd_angle_01.jpg",
+    "prompt": "Anaya Sharma wearing the tiered purple festive dress with exact face consistency and warm Indian skin tone, walking naturally toward camera, gentle smile, natural hair and fabric movement, continuous 9:16 vertical smartphone shot, 4k",
+    "negative_prompt": "text, watermark, title, banner, caption, logos, lower thirds, distorted face, unnatural blinking, extra fingers, plastic look, cartoon",
+    "resolution": "720x1280",
+    "aspect_ratio": "9:16",
+    "fps": 24,
+    "duration_seconds": 15,
+    "num_inference_steps": 35,
+    "guidance_scale": 6.5
+  },
+  "stage_2_face_swap_lock": {
+    "model_family": "InsightFace / ReActor",
+    "face_analyser": "antelopev2",
+    "swap_model": "inswapper_128.onnx",
+    "source_face_reference": "./assets/anaya_avatar.jpg",
+    "face_restore": "GFPGANv1.4",
+    "skin_tone_color_transfer": "LAB_histogram_matching",
+    "preserve_neck_contours": true,
+    "seamless_blend_mode": "poisson_cloning"
+  },
+  "stage_3_export": {
+    "clean_footage_only": true,
+    "zero_onscreen_text": true,
+    "container": "mp4",
+    "codec": "libx264",
+    "pixel_format": "yuv420p",
+    "target_filename": "anaya_clean_ootd_reel.mp4"
+  }
+}

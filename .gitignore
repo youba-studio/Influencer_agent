@@ -1,0 +1,34 @@
+# NEVER commit credentials
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Output videos (large files — download from Kaggle instead)
+output/*.mp4
+output/*.avi
+output/*.mov
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Kaggle credentials
+kaggle.json

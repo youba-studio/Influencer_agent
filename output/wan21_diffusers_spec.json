@@ -1,0 +1,18 @@
+{
+  "model_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
+  "fallback_model_id": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+  "framework": "diffusers.WanImageToVideoPipeline",
+  "dtype": "torch.bfloat16",
+  "conditioning_image": "assets/dress/lakdata_Women_Tiered_Pur_hd_angle_01.jpg",
+  "generation_parameters": {
+    "prompt": "Cinematic 9:16 vertical fashion reel of young Indian woman Anaya Sharma presenting a tiered purple festive kurta dress, walking gracefully toward the camera, relaxed elegant posture, natural hair movement, realistic skin texture, smooth clothing physics, photorealistic warm daylight, 4k",
+    "negative_prompt": "static, motionless, jittery, zoom in, zoom out, blurry, slideshow, cut and paste, deformed limbs, low quality, cartoon, 3d render",
+    "width": 720,
+    "height": 1280,
+    "num_frames": 81,
+    "fps": 16,
+    "guidance_scale": 6.0,
+    "num_inference_steps": 40
+  },
+  "output_file": "output\\anaya_real_motion.mp4"
+}

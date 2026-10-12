@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "project_name": "Anaya Sharma - Tiered Purple Festive OOTD Reel",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "aspect_ratio": "9:16",
+    "duration_seconds": 18.0
+  },
+  "identity_preservation": {
+    "model_name": "Anaya Sharma",
+    "primary_avatar_reference": "assets/anaya_avatar.jpg",
+    "dress_source_gallery": "assets/dress/",
+    "face_lock": true,
+    "skin_tone_consistency": "warm_indian_natural",
+    "strict_constraints": {
+      "no_face_morphing": true,
+      "no_identity_drift": true,
+      "no_invented_objects": true
+    }
+  },
+  "affiliate_monetization": {
+    "dress_title": "Women Tiered Purple Festive Kurta & Dupatta Set",
+    "retailer": "Myntra / Ajio",
+    "tracking_link": "https://earnkaro.com/track?ref=anaya_sharma&url=https%3A//www.myntra.com/dresses/tiered-purple-festive-anarkali",
+    "cta_label": "Shop My Look (Exact Match)",
+    "linktree_block": {
+      "title": "✨ Tiered Purple Festive Anarkali Dress",
+      "url": "https://earnkaro.com/track?ref=anaya_sharma&url=https%3A//www.myntra.com/dresses/tiered-purple-festive-anarkali",
+      "active": true
+    }
+  },
+  "tracks": [
+    {
+      "type": "video",
+      "layer": 1,
+      "clips": [
+        {
+          "source": "output/anaya_tiered_purple_ootd_reel.mp4",
+          "start": 0.0,
+          "duration": 18.0,
+          "scale_mode": "cover",
+          "filter": "color_grade_warm_cinematic"
+        }
+      ]
+    },
+    {
+      "type": "overlay_text",
+      "layer": 2,
+      "elements": [
+        {
+          "text": "✨ Tiered Purple Festive Anarkali ✨",
+          "start_time": 0.0,
+          "end_time": 6.0,
+          "font": "Poppins-Bold",
+          "font_size": 44,
+          "color": "#FFFFFF",
+          "position": "bottom_third",
+          "animation": "smooth_fade_in"
+        },
+        {
+          "text": "🛍️ Tap Link in Bio for Exact Dress Match",
+          "start_time": 6.0,
+          "end_time": 18.0,
+          "font": "Poppins-Bold",
+          "font_size": 42,
+          "color": "#FFD700",
+          "position": "bottom_third",
+          "animation": "pop_in"
+        }
+      ]
+    }
+  ],
+  "export": {
+    "format": "mp4",
+    "codec": "libx264",
+    "output_file": "output/anaya_tiered_purple_ootd_reel.mp4"
+  }
+}
