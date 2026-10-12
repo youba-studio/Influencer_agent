@@ -9,6 +9,25 @@
 
 ---
 
+### CHANGE 4 — Architectural Audit, Flow-Shift Fix & Test Suite (October 2026)
+
+**Problem:** 
+1. `pipe.scheduler.config['shift'] = 3.0` fails silently or causes AttributeError in modern Hugging Face `diffusers` because `SchedulerConfig` is immutable/frozen. The official `diffusers` pattern is `pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, shift=3.0)`.
+2. Hardcoded parameters across multiple files risked divergence between local orchestration, config files, and cloud notebooks.
+3. Fallback pixel-warping previously ran without an explicit flag, masking cloud generation failures.
+4. No automated verification test suite existed.
+
+**Fixes Applied:**
+1. **`pipeline_config.py` Single Source of Truth:** Centralized prompts, resolution (480x832), guidance scale (5.0), inference steps (50), flow shift (3.0), and frame count (81).
+2. **Correct Diffusers Flow Shift:** Notebook cell 5 and pipeline code updated to:
+   ```python
+   pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, shift=FLOW_SHIFT)
+   ```
+3. **No Fake Success in Cloud Generator:** `tools/cloud_video_generator.py` strictly returns real status and requires explicit flags (`--allow-warp-fallback`) rather than quietly outputting pixel-warp zoom slideshows.
+4. **Notebooks & Test Suite:** Added `cloud_notebooks/kaggle_wan21_i2v.ipynb`, generated via `make_notebook.py`. Created 21 automated unit tests in `tests/test_pipeline.py` (21/21 passing, verifying syntax, JSON validity, credentials isolation, flow_shift method, and anti-warp guarantees).
+
+---
+
 ### CHANGE 3 — Motion Fix: Slideshow Eliminated (October 2026)
 
 **Problem:** The generated video was still a slideshow / static image — no real walking, no fabric physics, no hair movement.

@@ -1,424 +1,550 @@
 """
-Generates the production Kaggle notebook for Anaya Sharma reel generation.
-Run: python make_notebook.py
+make_notebook.py — Generates the production Kaggle notebook.
+
+Run locally (no GPU needed):
+    python make_notebook.py
+
+This writes cloud_notebooks/kaggle_wan21_i2v.ipynb
+Then upload THAT file to Kaggle.
 """
+
 import json
 import pathlib
 
-cells_source = {
-    # ── PROMPTS (the #1 fix for slideshow) ──────────────────────────────────────
-    # Wan2.1 I2V needs a DIRECTOR'S SCRIPT: motion/action verbs FIRST, 80-100 words,
-    # describe HOW things move, not just what they look like.
-    "MOTION_PROMPT": (
-        "# This is the corrected motion-first prompt used in Cell 3"
-    ),
+OUTPUT_PATH = pathlib.Path("cloud_notebooks/kaggle_wan21_i2v.ipynb")
+OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    "cell1_check": [
-        "# CELL 1: System Check\n",
-        "import subprocess\n",
-        "result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)\n",
-        "print(result.stdout or 'No GPU detected!')\n",
-        "import torch\n",
-        "print('PyTorch:', torch.__version__)\n",
-        "print('CUDA available:', torch.cuda.is_available())\n",
-        "if torch.cuda.is_available():\n",
-        "    print('GPU:', torch.cuda.get_device_name(0))\n",
-        "    print('VRAM:', round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1), 'GB')\n",
-        "else:\n",
-        "    raise RuntimeError('Enable GPU in Kaggle: Settings > Accelerator > GPU T4 x2')\n",
-    ],
-    "cell2_install": [
-        "# CELL 2: Install All Dependencies (~3-5 min)\n",
-        "import subprocess\n",
-        "def run(cmd):\n",
-        "    print('Running:', cmd)\n",
-        "    subprocess.run(cmd, shell=True, check=True)\n",
-        "\n",
-        "run('pip install -q --upgrade pip')\n",
-        "run('pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121')\n",
-        "run('pip install -q git+https://github.com/huggingface/diffusers.git')\n",
-        "run('pip install -q transformers accelerate sentencepiece huggingface_hub')\n",
-        "run('pip install -q imageio imageio-ffmpeg pillow numpy scipy opencv-python-headless')\n",
-        "run('pip install -q insightface onnxruntime-gpu')\n",
-        "print('All dependencies installed!')\n",
-    ],
-    "cell3_config": [
-        "# CELL 3: Configuration\n",
-        "# KEY FIX: Prompt rewritten as director's script (motion verbs first, 90+ words)\n",
-        "# guidance_scale lowered to 5.0 (higher values suppress motion in Wan2.1)\n",
-        "# num_inference_steps raised to 50 for more coherent motion\n",
-        "import os\n",
-        "from pathlib import Path\n",
-        "\n",
-        "HF_TOKEN = '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'\n",
-        "\n",
-        "# 480P for T4 GPU (16GB VRAM), 720P for A100 (40GB VRAM)\n",
-        "USE_720P = False  # Set True only on A100\n",
-        "MODEL_ID = ('Wan-AI/Wan2.1-I2V-14B-720P-Diffusers' if USE_720P\n",
-        "             else 'Wan-AI/Wan2.1-I2V-14B-480P-Diffusers')\n",
-        "W, H = (720, 1280) if USE_720P else (480, 832)\n",
-        "NUM_FRAMES = 81\n",
-        "FPS = 16\n",
-        "\n",
-        "# FIXED: guidance_scale lowered from 6.0 to 5.0\n",
-        "# Higher guidance suppresses creative motion generation in Wan2.1 I2V\n",
-        "GUIDANCE_SCALE = 5.0\n",
-        "\n",
-        "# FIXED: steps raised from 40 to 50 for more coherent fluid motion\n",
-        "INFERENCE_STEPS = 50\n",
-        "\n",
-        "# Kaggle: upload dress images + avatar as Dataset named 'anaya-assets'\n",
-        "AVATAR_PATH = Path('/kaggle/input/anaya-assets/anaya_avatar.jpg')\n",
-        "DRESS_DIR   = Path('/kaggle/input/anaya-assets')\n",
-        "OUTPUT_DIR  = Path('/kaggle/working')\n",
-        "\n",
-        "# Colab: uncomment these instead\n",
-        "# AVATAR_PATH = Path('/content/anaya_avatar.jpg')\n",
-        "# DRESS_DIR   = Path('/content')\n",
-        "# OUTPUT_DIR  = Path('/content/output')\n",
-        "\n",
-        "OUTPUT_DIR.mkdir(parents=True, exist_ok=True)\n",
-        "if not AVATAR_PATH.exists():\n",
-        "    AVATAR_PATH = Path('anaya_avatar.jpg')\n",
-        "    DRESS_DIR   = Path('.')\n",
-        "\n",
-        "# ── FIXED PROMPT: Director's Script format (80-100 words, motion verbs FIRST) ──\n",
-        "# BAD: 'A woman in a purple dress' (static description = slideshow output)\n",
-        "# GOOD: Start with camera movement + body action + environmental physics\n",
-        "PROMPT = (\n",
-        "    'The camera slowly dollies forward toward a young Indian woman who walks gracefully '\n",
-        "    'toward the lens, her purple tiered anarkali dress swaying with each confident step, '\n",
-        "    'fabric tiers rippling softly in the breeze, long dark wavy hair gently flowing, '\n",
-        "    'arms swinging naturally at her sides, warm golden sunlight streaming through large '\n",
-        "    'windows, her lips curling into a subtle smile, looking directly into the camera, '\n",
-        "    'photorealistic 4K, cinematic depth of field, smooth continuous motion'\n",
-        ")\n",
-        "\n",
-        "# ── NEGATIVE PROMPT: Be specific about what NOT to generate ──\n",
-        "NEGATIVE_PROMPT = (\n",
-        "    'static image, frozen, no movement, slideshow, Ken Burns zoom, pan effect, '\n",
-        "    'jitter, shake, deformed, floating head, bad anatomy, disconnected neck, '\n",
-        "    'watermark, text overlay, banner, logo, blurry, low resolution, cartoon, '\n",
-        "    '3d render, CGI, artificial, plastic skin, overexposed'\n",
-        ")\n",
-        "\n",
-        "print('Model:', MODEL_ID)\n",
-        "print('Resolution:', W, 'x', H, '| Frames:', NUM_FRAMES, '| FPS:', FPS)\n",
-        "print('Guidance scale:', GUIDANCE_SCALE, '| Inference steps:', INFERENCE_STEPS)\n",
-        "print('Avatar:', AVATAR_PATH, '| Exists:', AVATAR_PATH.exists())\n",
-        "print()\n",
-        "print('PROMPT (', len(PROMPT.split()), 'words ):')\n",
-        "print(PROMPT)\n",
-    ],
-    "cell4_auth": [
-        "# CELL 4: Authenticate HuggingFace\n",
-        "from huggingface_hub import login\n",
-        "login(token=HF_TOKEN)\n",
-        "print('HuggingFace authentication complete!')\n",
-    ],
-    "cell5_load": [
-        "# CELL 5: Load Wan2.1 I2V Pipeline + Apply flow_shift Fix\n",
-        "# flow_shift=3.0 is the critical parameter that increases motion amplitude\n",
-        "# Without it, the model generates near-static frames (the slideshow effect)\n",
-        "import torch\n",
-        "from diffusers import WanImageToVideoPipeline\n",
-        "\n",
-        "print('Loading', MODEL_ID, '...')\n",
-        "print('Downloading ~15-30 GB of model weights on first run. Please wait...')\n",
-        "dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16\n",
-        "pipe = WanImageToVideoPipeline.from_pretrained(MODEL_ID, torch_dtype=dtype, token=HF_TOKEN)\n",
-        "\n",
-        "# KEY FIX: Set flow_shift on the scheduler to increase motion amplitude\n",
-        "# Default flow_shift is too conservative and causes near-static video\n",
-        "# flow_shift=3.0 is the community-validated value for visible, smooth motion\n",
-        "if hasattr(pipe, 'scheduler') and hasattr(pipe.scheduler, 'config'):\n",
-        "    pipe.scheduler.config['shift'] = 3.0\n",
-        "    print('Scheduler flow_shift set to 3.0 (motion amplifier active)')\n",
-        "\n",
-        "pipe.to('cuda')\n",
-        "pipe.enable_model_cpu_offload()  # Saves VRAM by offloading unused layers to CPU\n",
-        "pipe.enable_vae_slicing()        # Saves VRAM during VAE decode\n",
-        "print('Wan2.1 pipeline loaded! dtype:', dtype)\n",
-        "vram_used = round(torch.cuda.memory_allocated() / 1e9, 1)\n",
-        "vram_total = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1)\n",
-        "print('VRAM:', vram_used, 'GB /', vram_total, 'GB')\n",
-    ],
-    "cell6_image": [
-        "# CELL 6: Load and Prep Conditioning Image\n",
-        "# FIXED: Use letterbox/pillarbox padding instead of cropping\n",
-        "# Cropping cuts off the model's body which reduces motion signal\n",
-        "# Padding preserves full body context which helps the model generate walking motion\n",
-        "import glob\n",
-        "import numpy as np\n",
-        "from PIL import Image\n",
-        "\n",
-        "dress_images = sorted(glob.glob(str(DRESS_DIR / 'lakdata_Women_Tiered_Pur_hd_angle_*.jpg')))\n",
-        "print('Found', len(dress_images), 'dress reference images')\n",
-        "for p in dress_images:\n",
-        "    print(' ', p)\n",
-        "\n",
-        "# Change index (0-4) to pick a different angle\n",
-        "PRIMARY_IMAGE_PATH = dress_images[0] if dress_images else str(AVATAR_PATH)\n",
-        "print('Primary conditioning image:', PRIMARY_IMAGE_PATH)\n",
-        "\n",
-        "raw_img = Image.open(PRIMARY_IMAGE_PATH).convert('RGB')\n",
-        "orig_w, orig_h = raw_img.size\n",
-        "print('Original size:', orig_w, 'x', orig_h)\n",
-        "\n",
-        "# Letterbox/pillarbox: fit into W x H while preserving aspect ratio\n",
-        "# This keeps the full body visible rather than cropping the dress or feet\n",
-        "scale = min(W / orig_w, H / orig_h)\n",
-        "new_w = int(orig_w * scale)\n",
-        "new_h = int(orig_h * scale)\n",
-        "resized = raw_img.resize((new_w, new_h), Image.Resampling.LANCZOS)\n",
-        "\n",
-        "# Paste onto a neutral background (slightly warm beige, not stark black)\n",
-        "conditioning_image = Image.new('RGB', (W, H), (245, 240, 235))\n",
-        "paste_x = (W - new_w) // 2\n",
-        "paste_y = (H - new_h) // 2\n",
-        "conditioning_image.paste(resized, (paste_x, paste_y))\n",
-        "\n",
-        "conditioning_image.save(str(OUTPUT_DIR / 'conditioning_frame.jpg'))\n",
-        "print('Conditioning image ready:', conditioning_image.size, '(letterboxed, full body preserved)')\n",
-    ],
-    "cell7_generate": [
-        "# CELL 7: Generate True Diffusion Motion (Wan2.1 I2V)\n",
-        "# All fixes applied: director's prompt, guidance=5.0, steps=50, flow_shift=3.0\n",
-        "# Expected runtime: ~10-18 min on T4 GPU, ~4-6 min on A100\n",
-        "print('Starting Wan2.1 True Diffusion Generation...')\n",
-        "print('Frames:', NUM_FRAMES, '| Steps:', INFERENCE_STEPS, '| Guidance:', GUIDANCE_SCALE)\n",
-        "print('Prompt word count:', len(PROMPT.split()))\n",
-        "print('This may take 10-18 minutes on T4 GPU...')\n",
-        "\n",
-        "# Try seed=42 first; if result is still static, change seed (try 123, 777, 2024)\n",
-        "SEED = 42\n",
-        "\n",
-        "with torch.inference_mode():\n",
-        "    output = pipe(\n",
-        "        image=conditioning_image,\n",
-        "        prompt=PROMPT,\n",
-        "        negative_prompt=NEGATIVE_PROMPT,\n",
-        "        height=H,\n",
-        "        width=W,\n",
-        "        num_frames=NUM_FRAMES,\n",
-        "        guidance_scale=GUIDANCE_SCALE,\n",
-        "        num_inference_steps=INFERENCE_STEPS,\n",
-        "        generator=torch.Generator('cuda').manual_seed(SEED)\n",
-        "    )\n",
-        "\n",
-        "raw_frames = output.frames[0]  # list of PIL Images, each a full video frame\n",
-        "\n",
-        "# Quick motion check: measure pixel difference between first and last frame\n",
-        "import numpy as np\n",
-        "f0 = np.array(raw_frames[0]).astype(float)\n",
-        "f_last = np.array(raw_frames[-1]).astype(float)\n",
-        "motion_score = float(np.mean(np.abs(f_last - f0)))\n",
-        "print('Generation complete!', len(raw_frames), 'frames')\n",
-        "print('Motion score (0=static, >5=visible motion, >15=strong motion):', round(motion_score, 2))\n",
-        "if motion_score < 3.0:\n",
-        "    print('WARNING: Low motion detected. Try changing SEED to 123 or 777 and re-running Cell 7.')\n",
-        "    print('Also try lowering GUIDANCE_SCALE to 4.0 or 3.5 for even more motion freedom.')\n",
-        "else:\n",
-        "    print('Good motion detected! Proceeding to face-swap...')\n",
-    ],
-    "cell8_faceswap": [
-        "# CELL 8: InsightFace Face-Swap (Anaya face onto every frame)\n",
-        "# Uses Buffalo_L for face detection + inswapper_128 for seamless face-swap\n",
-        "# No floating head, no hard edges - skin-tone & lighting matched automatically\n",
-        "import cv2\n",
-        "import numpy as np\n",
-        "import insightface\n",
-        "from insightface.app import FaceAnalysis\n",
-        "from insightface.model_zoo import get_model\n",
-        "\n",
-        "print('Loading InsightFace Buffalo_L model...')\n",
-        "face_analyzer = FaceAnalysis(\n",
-        "    name='buffalo_l',\n",
-        "    providers=['CUDAExecutionProvider', 'CPUExecutionProvider']\n",
-        ")\n",
-        "face_analyzer.prepare(ctx_id=0, det_size=(640, 640))\n",
-        "\n",
-        "# inswapper_128.onnx - if not in Kaggle dataset, auto-download from HuggingFace\n",
-        "SWAPPER_PATH = Path('/kaggle/input/insightface-models/inswapper_128.onnx')\n",
-        "if not SWAPPER_PATH.exists():\n",
-        "    print('Downloading inswapper_128.onnx from HuggingFace...')\n",
-        "    from huggingface_hub import hf_hub_download\n",
-        "    SWAPPER_PATH = Path(hf_hub_download(\n",
-        "        repo_id='deepinsight/insightface',\n",
-        "        filename='models/inswapper_128.onnx',\n",
-        "        token=HF_TOKEN\n",
-        "    ))\n",
-        "print('Loading face swapper from:', SWAPPER_PATH)\n",
-        "face_swapper = get_model(str(SWAPPER_PATH), providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])\n",
-        "\n",
-        "# Load Anaya avatar and lock her facial identity\n",
-        "avatar_bgr = cv2.imread(str(AVATAR_PATH))\n",
-        "if avatar_bgr is None:\n",
-        "    raise FileNotFoundError('Avatar not found: ' + str(AVATAR_PATH))\n",
-        "anaya_faces = face_analyzer.get(avatar_bgr)\n",
-        "if not anaya_faces:\n",
-        "    raise ValueError('No face detected in anaya_avatar.jpg! Use a clear front-facing portrait.')\n",
-        "anaya_face = sorted(anaya_faces, key=lambda f: f.bbox[2] * f.bbox[3], reverse=True)[0]\n",
-        "print('Anaya face locked. Confidence:', round(float(anaya_face.det_score), 2))\n",
-        "print('Applying face-swap to all', len(raw_frames), 'frames...')\n",
-        "\n",
-        "swapped_frames = []\n",
-        "swap_count = 0\n",
-        "no_face_count = 0\n",
-        "for i, pil_frame in enumerate(raw_frames):\n",
-        "    frame_bgr = cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)\n",
-        "    target_faces = face_analyzer.get(frame_bgr)\n",
-        "    if target_faces:\n",
-        "        target_face = sorted(target_faces, key=lambda f: f.bbox[2] * f.bbox[3], reverse=True)[0]\n",
-        "        frame_bgr = face_swapper.get(frame_bgr, target_face, anaya_face, paste_back=True)\n",
-        "        swap_count += 1\n",
-        "    else:\n",
-        "        no_face_count += 1\n",
-        "    swapped_frames.append(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))\n",
-        "    if (i + 1) % 10 == 0:\n",
-        "        print(' Frame', i+1, '/', len(raw_frames), '| Swapped:', swap_count, '| NoFace:', no_face_count)\n",
-        "\n",
-        "print('Face-swap complete! Swapped:', swap_count, '/', len(raw_frames), 'frames')\n",
-    ],
-    "cell9_export": [
-        "# CELL 9: Export Clean 9:16 MP4 (ZERO text, ZERO overlays, ZERO watermarks)\n",
-        "import imageio\n",
-        "\n",
-        "OUTPUT_VIDEO_PATH = OUTPUT_DIR / 'anaya_real_motion.mp4'\n",
-        "print('Exporting', len(swapped_frames), 'frames to', OUTPUT_VIDEO_PATH)\n",
-        "\n",
-        "writer = imageio.get_writer(\n",
-        "    str(OUTPUT_VIDEO_PATH),\n",
-        "    fps=FPS,\n",
-        "    codec='libx264',\n",
-        "    quality=9,\n",
-        "    pixelformat='yuv420p',\n",
-        "    macro_block_size=1\n",
-        ")\n",
-        "for frame_rgb in swapped_frames:\n",
-        "    if frame_rgb.shape[:2] != (H, W):\n",
-        "        from PIL import Image as PILImg\n",
-        "        frame_rgb = np.array(PILImg.fromarray(frame_rgb).resize((W, H), PILImg.Resampling.LANCZOS))\n",
-        "    writer.append_data(frame_rgb)\n",
-        "writer.close()\n",
-        "\n",
-        "size_mb = round(OUTPUT_VIDEO_PATH.stat().st_size / 1e6, 1)\n",
-        "print('Clean 9:16 video exported!')\n",
-        "print('Path:', OUTPUT_VIDEO_PATH)\n",
-        "print('Size:', size_mb, 'MB | Duration:', round(NUM_FRAMES/FPS, 1), 'sec | Resolution:', W, 'x', H)\n",
-        "print('ZERO overlays. ZERO banners. ZERO watermarks.')\n",
-        "print('Download: Kaggle > Output tab > anaya_real_motion.mp4')\n",
-    ],
-    "cell10_preview": [
-        "# CELL 10: Preview First and Last Frame\n",
-        "from IPython.display import display\n",
-        "from PIL import Image as PILImage\n",
-        "\n",
-        "first_frame = PILImage.fromarray(swapped_frames[0])\n",
-        "last_frame  = PILImage.fromarray(swapped_frames[-1])\n",
-        "preview = PILImage.new('RGB', (W * 2 + 10, H), (20, 20, 20))\n",
-        "preview.paste(first_frame, (0, 0))\n",
-        "preview.paste(last_frame, (W + 10, 0))\n",
-        "preview_small = preview.resize((480, int(480 * H / (W * 2 + 10))), PILImage.Resampling.LANCZOS)\n",
-        "print('First Frame (left) vs Last Frame (right):')\n",
-        "display(preview_small)\n",
-        "print('Video ready:', OUTPUT_VIDEO_PATH)\n",
-    ],
-    "cell11_multiangle": [
-        "# CELL 11 (OPTIONAL): Generate Multi-Angle Variants - uncomment to run\n",
-        "# Generates a separate video for each of the 5 dress angle reference images\n",
-        "\n",
-        "# for angle_idx, dress_path in enumerate(dress_images):\n",
-        "#     print('Generating angle', angle_idx+1, ':', dress_path)\n",
-        "#     cond_img = Image.open(dress_path).convert('RGB').resize((W, H))\n",
-        "#     with torch.inference_mode():\n",
-        "#         out = pipe(\n",
-        "#             image=cond_img, prompt=PROMPT, negative_prompt=NEGATIVE_PROMPT,\n",
-        "#             height=H, width=W, num_frames=NUM_FRAMES,\n",
-        "#             guidance_scale=GUIDANCE_SCALE, num_inference_steps=INFERENCE_STEPS\n",
-        "#         )\n",
-        "#     swapped = []\n",
-        "#     for pil_f in out.frames[0]:\n",
-        "#         bgr = cv2.cvtColor(np.array(pil_f), cv2.COLOR_RGB2BGR)\n",
-        "#         faces = face_analyzer.get(bgr)\n",
-        "#         if faces:\n",
-        "#             tgt = sorted(faces, key=lambda f: f.bbox[2]*f.bbox[3], reverse=True)[0]\n",
-        "#             bgr = face_swapper.get(bgr, tgt, anaya_face, paste_back=True)\n",
-        "#         swapped.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))\n",
-        "#     var_path = OUTPUT_DIR / ('anaya_angle_' + str(angle_idx+1).zfill(2) + '.mp4')\n",
-        "#     imageio.mimwrite(str(var_path), swapped, fps=FPS, quality=9)\n",
-        "#     print('Saved:', var_path)\n",
-        "\n",
-        "print('Multi-angle generation ready. Uncomment Cell 11 to generate all 5 angle videos.')\n",
-    ],
+# ---------------------------------------------------------------------------
+# All cells as plain strings — NO hardcoded tokens anywhere
+# ---------------------------------------------------------------------------
+
+CELL_0_MARKDOWN = """\
+# Anaya Sharma — Wan2.1 I2V Fashion Reel Generator
+## Production Kaggle Notebook (v3.0)
+
+**Before running:**
+1. Add your `anaya-assets` dataset (contains outfit image + anaya_avatar.jpg)
+2. Set Accelerator → **GPU T4 x2**
+3. Set Internet → **ON**
+4. Add your HuggingFace token as a **Kaggle Secret** named `HF_TOKEN`
+   (Notebook sidebar → Add-ons → Secrets → Add New Secret)
+
+**This notebook generates REAL AI video using Wan2.1 Image-to-Video diffusion.**
+It does NOT use pixel warping, Ken Burns zoom, or image crossfading.
+If GPU inference fails for any reason, the notebook will report failure clearly.
+"""
+
+CELL_1_GPU_CHECK = """\
+# CELL 1: GPU & Environment Check
+import subprocess, sys, os, platform
+
+print("=" * 60)
+print("  ENVIRONMENT CHECK")
+print("=" * 60)
+
+result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
+if result.returncode != 0:
+    raise RuntimeError(
+        "No GPU detected. Enable GPU: Settings → Accelerator → GPU T4 x2"
+    )
+print(result.stdout)
+
+import torch
+print(f"PyTorch     : {torch.__version__}")
+print(f"CUDA avail  : {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    props = torch.cuda.get_device_properties(0)
+    total_vram_gb = props.total_memory / 1e9
+    print(f"GPU         : {props.name}")
+    print(f"VRAM        : {total_vram_gb:.1f} GB")
+    if total_vram_gb < 14:
+        print("WARNING: Less than 14 GB VRAM — will force 1.3B model.")
+    elif total_vram_gb < 18:
+        print("NOTE: ~16 GB VRAM — will use 14B with CPU offloading.")
+        print("      If OOM occurs, set USE_SMALL_MODEL = True in Cell 2.")
+print("=" * 60)
+"""
+
+CELL_2_CONFIG = """\
+# CELL 2: Configuration  (single source of truth — matches pipeline_config.py)
+# ──────────────────────────────────────────────────────────────────────────────
+# Set USE_SMALL_MODEL = True if you get CUDA out-of-memory on T4.
+# The 1.3B model is faster and fits easily; quality is lower but still real AI motion.
+USE_SMALL_MODEL = False
+
+import os
+from pathlib import Path
+
+# ── Model ──────────────────────────────────────────────────────────────────
+MODEL_ID_14B  = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+MODEL_ID_1_3B = "Wan-AI/Wan2.1-I2V-1.3B-480P-Diffusers"
+MODEL_ID = MODEL_ID_1_3B if USE_SMALL_MODEL else MODEL_ID_14B
+
+# ── Resolution (Wan2.1 480P official supported dimensions) ─────────────────
+W, H = 480, 832      # 9:16 portrait — do NOT change to arbitrary values
+
+# ── Generation parameters ──────────────────────────────────────────────────
+NUM_FRAMES        = 81      # ~5.1 s at 16 fps
+OUTPUT_FPS        = 16
+GUIDANCE_SCALE    = 5.0     # 5.0 for 480P; higher values suppress motion
+NUM_STEPS         = 50      # 50 for quality; 30 if time-constrained
+SEED              = 42      # change to 123 / 777 if result is too static
+
+# ── Scheduler ──────────────────────────────────────────────────────────────
+# flow_shift MUST be applied via from_config(), not by mutating config dict.
+FLOW_SHIFT = 3.0   # 3.0 recommended for 480P
+
+# ── Paths ───────────────────────────────────────────────────────────────────
+ASSET_DIR  = Path("/kaggle/input/anaya-assets")
+OUTPUT_DIR = Path("/kaggle/working")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Auto-detect if running on Colab instead
+if not ASSET_DIR.exists():
+    ASSET_DIR  = Path("/content")
+    OUTPUT_DIR = Path("/content/output")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print("Colab path detected.")
+
+AVATAR_PATH      = ASSET_DIR / "anaya_avatar.jpg"
+OUTPUT_VIDEO     = OUTPUT_DIR / "anaya_fashion_reel.mp4"
+CONTACT_SHEET    = OUTPUT_DIR / "contact_sheet.jpg"
+RUN_REPORT_PATH  = OUTPUT_DIR / "run_report.json"
+
+# ── Prompts ─────────────────────────────────────────────────────────────────
+# Describe TEMPORAL ACTION, not static appearance.
+# Motion verbs must come first. ~90 words is the effective range.
+MOTION_PROMPT = (
+    "An elegant young Indian woman presents her outfit in a natural full-body fashion shot. "
+    "She maintains a relaxed standing pose, gently shifts her weight once, makes a subtle "
+    "head movement, softly smiles, and lets the skirt and loose fabric respond naturally "
+    "to the small body motion. Her hair moves slightly with the motion. "
+    "The camera stays nearly fixed. Continuous realistic human motion, coherent anatomy, "
+    "natural lighting, realistic fabric drape and folds. "
+    "Preserve the exact outfit design, colour and pattern from the input image."
+)
+
+NEGATIVE_PROMPT = (
+    "frozen, static image, no movement, slideshow, Ken Burns zoom, artificial pan, "
+    "sudden pose change, camera cut, identity drift, facial flicker, face shape change, "
+    "clothing redesign, changing prints or colours, disappearing fabric, unstable hem, "
+    "extra limbs, missing limbs, deformed hands, floating body parts, feet sliding, "
+    "phone, props, additional people, text, logo, border, watermark, "
+    "excessive hair motion, implausible physics, blurry, low quality, cartoon, CGI"
+)
+
+print(f"Model      : {MODEL_ID}")
+print(f"Resolution : {W}x{H}  |  Frames: {NUM_FRAMES}  |  FPS: {OUTPUT_FPS}")
+print(f"Guidance   : {GUIDANCE_SCALE}  |  Steps: {NUM_STEPS}  |  Seed: {SEED}")
+print(f"Flow shift : {FLOW_SHIFT}  (applied via scheduler.from_config)")
+print(f"Asset dir  : {ASSET_DIR}  (exists: {ASSET_DIR.exists()})")
+print(f"Avatar     : {AVATAR_PATH}  (exists: {AVATAR_PATH.exists()})")
+print(f"Output dir : {OUTPUT_DIR}")
+print()
+print(f"Prompt ({len(MOTION_PROMPT.split())} words):")
+print(MOTION_PROMPT)
+"""
+
+CELL_3_INSTALL = """\
+# CELL 3: Install Dependencies  (~3-5 minutes on first run)
+import subprocess
+
+def run(cmd):
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if r.returncode != 0:
+        print("STDERR:", r.stderr[-2000:])
+    return r.returncode == 0
+
+print("Installing diffusers and video stack...")
+assert run("pip install -q --upgrade diffusers transformers accelerate sentencepiece")
+assert run("pip install -q imageio imageio-ffmpeg pillow numpy scipy opencv-python-headless")
+print("All dependencies installed.")
+"""
+
+CELL_4_HF_AUTH = """\
+# CELL 4: HuggingFace Authentication
+# Reads HF_TOKEN from Kaggle Secrets (recommended) or environment variable.
+# Never hardcode your token here.
+from huggingface_hub import login
+import os
+
+# Try Kaggle secret first, then env var
+try:
+    from kaggle_secrets import UserSecretsClient
+    hf_token = UserSecretsClient().get_secret("HF_TOKEN")
+    print("HF_TOKEN loaded from Kaggle Secrets.")
+except Exception:
+    hf_token = os.environ.get("HF_TOKEN", "")
+    if hf_token:
+        print("HF_TOKEN loaded from environment variable.")
+    else:
+        raise RuntimeError(
+            "HF_TOKEN not found!\\n"
+            "Add it: Notebook sidebar → Add-ons → Secrets → HF_TOKEN"
+        )
+
+login(token=hf_token, add_to_git_credential=False)
+print("HuggingFace authentication: OK")
+"""
+
+CELL_5_LOAD_MODEL = """\
+# CELL 5: Load Wan2.1 I2V Model
+# Applies the correct flow_shift via scheduler.from_config() — NOT dict mutation.
+import torch
+import gc
+from diffusers import WanImageToVideoPipeline, FlowMatchEulerDiscreteScheduler
+
+print(f"Loading model: {MODEL_ID}")
+print("First run downloads ~15-30 GB. Subsequent runs use cache.")
+print("This may take 5-15 minutes...")
+
+dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+try:
+    pipe = WanImageToVideoPipeline.from_pretrained(
+        MODEL_ID,
+        torch_dtype=dtype,
+        token=hf_token,
+    )
+except Exception as e:
+    raise RuntimeError(
+        f"Model load failed: {e}\\n"
+        f"If authentication error: verify HF_TOKEN has read access to {MODEL_ID}\\n"
+        f"If disk/memory error: set USE_SMALL_MODEL = True in Cell 2"
+    )
+
+# ── Apply flow_shift correctly ──────────────────────────────────────────────
+# The ONLY correct way: reconstruct scheduler via from_config with shift param.
+# Mutating pipe.scheduler.config['shift'] after-the-fact does NOT work reliably.
+try:
+    pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+        pipe.scheduler.config,
+        shift=FLOW_SHIFT,
+    )
+    print(f"Scheduler: FlowMatchEulerDiscreteScheduler  flow_shift={FLOW_SHIFT}")
+except Exception as e:
+    print(f"Warning: Could not set flow_shift ({e}). Proceeding with default scheduler.")
+
+# ── Memory optimisations (critical for T4 16 GB) ───────────────────────────
+pipe.enable_model_cpu_offload()   # offloads unused layers to CPU RAM
+pipe.enable_vae_slicing()          # decode VAE slice-by-slice to save VRAM
+
+gc.collect()
+torch.cuda.empty_cache()
+
+vram_used  = round(torch.cuda.memory_allocated() / 1e9, 2)
+vram_total = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 2)
+print(f"Model loaded. VRAM used: {vram_used} / {vram_total} GB")
+"""
+
+CELL_6_PREP_IMAGE = """\
+# CELL 6: Prepare Conditioning Image (letterbox — preserves full outfit)
+import glob
+from PIL import Image
+import numpy as np
+
+# Find dress images; fall back to avatar if none found
+dress_paths = sorted(glob.glob(str(ASSET_DIR / "lakdata_Women_Tiered_Pur_hd_angle_*.jpg")))
+print(f"Found {len(dress_paths)} dress reference images.")
+for p in dress_paths:
+    print(f"  {p}")
+
+PRIMARY_PATH = dress_paths[0] if dress_paths else str(AVATAR_PATH)
+print(f"\\nUsing conditioning image: {PRIMARY_PATH}")
+
+raw = Image.open(PRIMARY_PATH).convert("RGB")
+orig_w, orig_h = raw.size
+print(f"Original size: {orig_w}x{orig_h}")
+
+# Letterbox: scale to fit WxH while preserving aspect ratio
+# Never stretch — squishing distorts body proportions and confuses the model
+scale = min(W / orig_w, H / orig_h)
+new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+resized = raw.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+# Neutral warm background — avoids stark black bars that confuse diffusion
+canvas = Image.new("RGB", (W, H), (245, 240, 235))
+paste_x = (W - new_w) // 2
+paste_y = (H - new_h) // 2
+canvas.paste(resized, (paste_x, paste_y))
+conditioning_image = canvas
+
+canvas.save(str(OUTPUT_DIR / "conditioning_frame.jpg"))
+print(f"Conditioning image prepared: {W}x{H} (letterboxed, full outfit preserved)")
+"""
+
+CELL_7_GENERATE = """\
+# CELL 7: Generate Video — Real Wan2.1 I2V Diffusion
+# ─────────────────────────────────────────────────────────────────────────────
+# This cell runs the actual neural network inference.
+# Expected time: 15-30 min on T4 (14B), 5-10 min (1.3B)
+# If CUDA OOM: set USE_SMALL_MODEL = True in Cell 2 and re-run from Cell 5.
+# ─────────────────────────────────────────────────────────────────────────────
+import torch, time
+
+print("Starting Wan2.1 I2V generation...")
+print(f"  Frames : {NUM_FRAMES}  |  Steps : {NUM_STEPS}  |  Guidance : {GUIDANCE_SCALE}")
+print(f"  Seed   : {SEED}")
+print(f"  Prompt : {MOTION_PROMPT[:120]}...")
+print()
+
+generation_start = time.time()
+generation_error = None
+raw_frames = None
+
+try:
+    with torch.inference_mode():
+        output = pipe(
+            image=conditioning_image,
+            prompt=MOTION_PROMPT,
+            negative_prompt=NEGATIVE_PROMPT,
+            height=H,
+            width=W,
+            num_frames=NUM_FRAMES,
+            guidance_scale=GUIDANCE_SCALE,
+            num_inference_steps=NUM_STEPS,
+            generator=torch.Generator("cuda").manual_seed(SEED),
+        )
+    raw_frames = output.frames[0]  # list of PIL Images
+    generation_time = round(time.time() - generation_start, 1)
+    print(f"Generation complete in {generation_time}s — {len(raw_frames)} frames produced.")
+
+except torch.cuda.OutOfMemoryError as e:
+    generation_error = f"CUDA OOM: {e}"
+    print(f"\\nOUT OF MEMORY ERROR: {generation_error}")
+    print("Fix: set USE_SMALL_MODEL = True in Cell 2, then re-run from Cell 5.")
+    raise
+
+except Exception as e:
+    generation_error = str(e)
+    print(f"\\nGENERATION FAILED: {generation_error}")
+    raise
+"""
+
+CELL_8_VALIDATE = """\
+# CELL 8: Quality Validation
+# Distinguishes too-little-motion from plausible motion from excessive drift.
+# These checks are DIAGNOSTIC — they do not guarantee perceptual quality.
+import numpy as np
+
+if raw_frames is None:
+    raise RuntimeError("No frames to validate — generation did not complete.")
+
+frames_np = [np.array(f).astype(np.float32) for f in raw_frames]
+
+# ── 1. Motion score: mean absolute pixel difference first→last ────────────
+f0, f_last = frames_np[0], frames_np[-1]
+motion_score = float(np.mean(np.abs(f_last - f0)))
+print(f"Motion score (first→last frame diff): {motion_score:.2f}")
+print(f"  < {2.0} = likely frozen/slideshow")
+print(f"  {2.0}–{40.0} = plausible subject movement")
+print(f"  > {40.0} = possible identity drift or camera jitter")
+
+# ── 2. Temporal consistency: frame-to-frame mean diff ────────────────────
+frame_diffs = [
+    float(np.mean(np.abs(frames_np[i+1] - frames_np[i])))
+    for i in range(0, len(frames_np) - 1, 5)   # sample every 5 frames
+]
+mean_jitter = float(np.mean(frame_diffs))
+max_jitter  = float(np.max(frame_diffs))
+print(f"\\nTemporal consistency (sampled every 5 frames):")
+print(f"  Mean frame-to-frame diff : {mean_jitter:.2f}")
+print(f"  Max  frame-to-frame diff : {max_jitter:.2f}")
+if max_jitter > 30:
+    print("  WARNING: High max jitter — may indicate a scene cut or identity flip.")
+
+# ── 3. Determine review status ────────────────────────────────────────────
+if motion_score < 2.0:
+    review_status = "NEEDS_REVIEW__TOO_STATIC"
+    print(f"\\nStatus: {review_status}")
+    print("  Retry: change SEED to 123 or 777, lower GUIDANCE_SCALE to 4.0")
+elif motion_score > 40.0:
+    review_status = "NEEDS_REVIEW__EXCESSIVE_MOTION"
+    print(f"\\nStatus: {review_status}")
+    print("  Retry: raise GUIDANCE_SCALE to 6.0, change SEED")
+else:
+    review_status = "MOTION_OK__REVIEW_VISUALLY"
+    print(f"\\nStatus: {review_status}")
+    print("  Motion is in the plausible range. Review the contact sheet below.")
+
+print("\\n  *** Always review the video manually before publishing. ***")
+"""
+
+CELL_9_EXPORT = """\
+# CELL 9: Export Clean MP4
+import imageio, numpy as np
+
+if raw_frames is None:
+    raise RuntimeError("No frames — cannot export. Fix generation errors first.")
+
+print(f"Exporting {len(raw_frames)} frames to {OUTPUT_VIDEO} ...")
+
+writer = imageio.get_writer(
+    str(OUTPUT_VIDEO),
+    fps=OUTPUT_FPS,
+    codec="libx264",
+    output_params=["-pix_fmt", "yuv420p", "-crf", "18"],
+)
+for frame in raw_frames:
+    writer.append_data(np.array(frame))
+writer.close()
+
+import os
+size_mb = round(os.path.getsize(str(OUTPUT_VIDEO)) / 1e6, 2)
+print(f"Exported: {OUTPUT_VIDEO}  ({size_mb} MB)")
+print("No text overlays, no watermarks, no borders — clean 9:16 footage only.")
+"""
+
+CELL_10_CONTACT_SHEET = """\
+# CELL 10: Save Contact Sheet (representative frames for visual review)
+import numpy as np
+from PIL import Image
+
+STRIDE = 10   # one frame every STRIDE frames
+sampled = raw_frames[::STRIDE]
+print(f"Contact sheet: {len(sampled)} frames sampled every {STRIDE} frames")
+
+cols = min(4, len(sampled))
+rows = (len(sampled) + cols - 1) // cols
+thumb_w, thumb_h = W // 2, H // 2
+
+sheet = Image.new("RGB", (cols * thumb_w, rows * thumb_h), (30, 30, 30))
+for idx, frame in enumerate(sampled):
+    thumb = frame.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+    r, c = divmod(idx, cols)
+    sheet.paste(thumb, (c * thumb_w, r * thumb_h))
+
+sheet.save(str(CONTACT_SHEET))
+print(f"Contact sheet saved: {CONTACT_SHEET}")
+
+# Display inline
+from IPython.display import display
+display(sheet.resize((sheet.width // 2, sheet.height // 2)))
+"""
+
+CELL_11_RUN_REPORT = """\
+# CELL 11: Save Run Report JSON
+import json, datetime, torch
+
+report = {
+    "schema_version": "3.0",
+    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "model": {
+        "model_id": MODEL_ID,
+        "dtype": str(dtype),
+    },
+    "scheduler": {
+        "class": "FlowMatchEulerDiscreteScheduler",
+        "flow_shift": FLOW_SHIFT,
+    },
+    "generation": {
+        "prompt_word_count": len(MOTION_PROMPT.split()),
+        "width": W,
+        "height": H,
+        "num_frames": NUM_FRAMES,
+        "fps": OUTPUT_FPS,
+        "guidance_scale": GUIDANCE_SCALE,
+        "num_inference_steps": NUM_STEPS,
+        "seed": SEED,
+        "generation_time_s": generation_time if 'generation_time' in dir() else None,
+    },
+    "hardware": {
+        "gpu_name": torch.cuda.get_device_properties(0).name if torch.cuda.is_available() else "N/A",
+        "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if torch.cuda.is_available() else 0,
+    },
+    "quality": {
+        "motion_score": round(motion_score, 3) if 'motion_score' in dir() else None,
+        "mean_jitter": round(mean_jitter, 3) if 'mean_jitter' in dir() else None,
+        "max_jitter": round(max_jitter, 3) if 'max_jitter' in dir() else None,
+        "review_status": review_status if 'review_status' in dir() else "UNKNOWN",
+    },
+    "output": {
+        "video": str(OUTPUT_VIDEO),
+        "contact_sheet": str(CONTACT_SHEET),
+    },
+    "generation_method": "WAN2.1_I2V_DIFFUSION__GENUINE_AI_VIDEO",
 }
 
-def make_code_cell(source_lines):
+with open(str(RUN_REPORT_PATH), "w") as f:
+    json.dump(report, f, indent=2)
+
+print("Run report saved:", RUN_REPORT_PATH)
+print()
+print(json.dumps(report, indent=2))
+"""
+
+CELL_12_DISPLAY = """\
+# CELL 12: Display Output
+from IPython.display import Video, display
+
+print("Final output video:")
+print(f"  {OUTPUT_VIDEO}")
+print()
+print("Download from the Output tab (right sidebar) when notebook finishes.")
+print()
+# Inline preview (may not work in all Kaggle versions)
+try:
+    display(Video(str(OUTPUT_VIDEO), width=320))
+except Exception:
+    print("(Inline preview not available — download from Output tab)")
+"""
+
+# ---------------------------------------------------------------------------
+# Assemble notebook
+# ---------------------------------------------------------------------------
+
+def make_cell(source_str: str, cell_type: str = "code") -> dict:
+    lines = [line + "\\n" for line in source_str.splitlines()]
+    if lines:
+        lines[-1] = lines[-1].rstrip("\\n")
+    if cell_type == "markdown":
+        return {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": lines,
+        }
     return {
         "cell_type": "code",
         "execution_count": None,
         "metadata": {},
         "outputs": [],
-        "source": source_lines
+        "source": lines,
     }
 
-def make_md_cell(source_lines):
-    return {
-        "cell_type": "markdown",
-        "metadata": {},
-        "source": source_lines
-    }
 
-nb = {
-    "cells": [
-        make_md_cell([
-            "# Anaya Sharma - Wan2.1 I2V + InsightFace Reel Generator\n",
-            "## Production Kaggle/Colab Cloud GPU Pipeline\n",
-            "\n",
-            "**What this notebook does:**\n",
-            "1. Installs PyTorch + HuggingFace Diffusers with Wan2.1 I2V support\n",
-            "2. Installs InsightFace for seamless face-swap (Anaya face onto the runway model)\n",
-            "3. Loads Wan-AI/Wan2.1-I2V-14B-480P-Diffusers (T4 GPU) or 720P (A100)\n",
-            "4. Conditions on the dress reference - TRUE physics-based diffusion motion\n",
-            "5. Applies InsightFace face-swap on every generated frame\n",
-            "6. Exports CLEAN 9:16 vertical MP4 - ZERO text, ZERO banners, ZERO borders\n",
-            "\n",
-            "**Required Kaggle Dataset (name it anaya-assets):**\n",
-            "- anaya_avatar.jpg\n",
-            "- lakdata_Women_Tiered_Pur_hd_angle_01.jpg through _05.jpg\n",
-            "\n",
-            "GPU Required: T4 (minimum) or A100 (recommended for 720P 9:16)"
-        ]),
-        make_code_cell(cells_source["cell1_check"]),
-        make_code_cell(cells_source["cell2_install"]),
-        make_code_cell(cells_source["cell3_config"]),
-        make_code_cell(cells_source["cell4_auth"]),
-        make_code_cell(cells_source["cell5_load"]),
-        make_code_cell(cells_source["cell6_image"]),
-        make_code_cell(cells_source["cell7_generate"]),
-        make_code_cell(cells_source["cell8_faceswap"]),
-        make_code_cell(cells_source["cell9_export"]),
-        make_code_cell(cells_source["cell10_preview"]),
-        make_code_cell(cells_source["cell11_multiangle"]),
-    ],
+notebook = {
     "metadata": {
+        "accelerator": "GPU",
         "kernelspec": {
             "display_name": "Python 3",
             "language": "python",
-            "name": "python3"
+            "name": "python3",
         },
-        "language_info": {
-            "name": "python",
-            "version": "3.10.14"
-        },
-        "accelerator": "GPU"
+        "language_info": {"name": "python"},
     },
     "nbformat": 4,
-    "nbformat_minor": 4
+    "nbformat_minor": 5,
+    "cells": [
+        make_cell(CELL_0_MARKDOWN, "markdown"),
+        make_cell(CELL_1_GPU_CHECK),
+        make_cell(CELL_2_CONFIG),
+        make_cell(CELL_3_INSTALL),
+        make_cell(CELL_4_HF_AUTH),
+        make_cell(CELL_5_LOAD_MODEL),
+        make_cell(CELL_6_PREP_IMAGE),
+        make_cell(CELL_7_GENERATE),
+        make_cell(CELL_8_VALIDATE),
+        make_cell(CELL_9_EXPORT),
+        make_cell(CELL_10_CONTACT_SHEET),
+        make_cell(CELL_11_RUN_REPORT),
+        make_cell(CELL_12_DISPLAY),
+    ],
 }
 
-out_path = pathlib.Path(r'C:/Users/youge/.gemini/antigravity-ide/scratch/anaya_agent/cloud_notebooks/wan21_cloud_video_generator.ipynb')
-out_path.parent.mkdir(parents=True, exist_ok=True)
-with open(out_path, 'w', encoding='utf-8') as f:
-    json.dump(nb, f, indent=1, ensure_ascii=False)
-print(f"Notebook written: {out_path} ({out_path.stat().st_size} bytes, {len(nb['cells'])} cells)")
+with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+    json.dump(notebook, f, indent=1)
+
+nb_bytes = OUTPUT_PATH.stat().st_size
+print(f"Notebook written: {OUTPUT_PATH}  ({nb_bytes:,} bytes, {len(notebook['cells'])} cells)")
+print()
+print("Upload this file to Kaggle, then follow the steps printed by main.py.")

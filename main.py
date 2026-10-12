@@ -1,175 +1,168 @@
 """
-Anaya Sharma AI Influencer - Autonomous Agent Orchestrator.
-Pipelines:
-1. Affiliate Monetization (EarnKaro tracking & Linktree storefront)
-2. Unified Generative Cloud Video (Wan2.1 I2V diffusion - clean 9:16 footage, ZERO text)
-3. Social Distribution (Instagram Reels publishing with Hinglish captions & bio CTA)
+main.py — Anaya Sharma AI Influencer Agent Orchestrator.
+
+Pipelines (each can be run independently):
+  1. Spec Builder  — prepares the cloud notebook run specification JSON.
+  2. Affiliate     — generates EarnKaro links (disabled by default).
+  3. Publisher     — publishes to Instagram (disabled by default; requires
+                     a validated cloud-generated video first).
+
+Video generation itself always happens in the cloud notebook.
+This script does NOT run or fake local video generation.
+
+Usage:
+  python main.py --build-spec --image assets/dress/angle_01.jpg
+  python main.py --build-spec --image my_outfit.jpg --skip-affiliate --skip-publish
 """
 
-import os
-import sys
+import argparse
 import json
 import logging
+import sys
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Dict, Any, List
-
-# Workspace configuration & tools
-from config import config
-from tools.affiliate_engine import AffiliateEngine
-from tools.cloud_video_generator import CloudVideoGenerator
-from tools.instagram_publisher import InstagramPublisher
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("AnayaAgent")
 
-
-@dataclass
-class LocalAgentConfig:
-    """Agent runtime configuration for Antigravity SDK orchestration."""
-    agent_name: str = "Anaya Sharma AI Influencer"
-    version: str = "2.2.0"
-    avatar_image_path: str = "./assets/anaya_avatar.jpg"
-    enable_affiliate: bool = True
-    enable_generative_video: bool = True
-    enable_social_distribution: bool = True
-    output_dir: str = "./output"
+BASE_DIR = Path(__file__).resolve().parent
 
 
-class AnayaAgent:
-    """
-    Unified Autonomous AI Influencer Agent.
-    """
-
-    def __init__(self, agent_config: LocalAgentConfig = LocalAgentConfig()):
-        self.agent_config = agent_config
-        self.affiliate_engine = AffiliateEngine()
-        self.video_generator = CloudVideoGenerator(output_dir=agent_config.output_dir)
-        self.instagram_publisher = InstagramPublisher()
-
-    def run_pipeline(
-        self,
-        outfit_prompt: str,
-        product_items: List[Dict[str, str]],
-        video_motion_prompt: str | None = None
-    ) -> Dict[str, Any]:
-        """
-        Executes the end-to-end autonomous publishing cycle.
-        """
-        logger.info(f"=== Starting Pipeline Run for: '{outfit_prompt}' ===")
-        report = {
-            "agent": self.agent_config.agent_name,
-            "version": self.agent_config.version,
-            "outfit_prompt": outfit_prompt,
-            "steps": {}
-        }
-
-        # Step 1: Affiliate Monetization & Linktree Storefront
-        if self.agent_config.enable_affiliate:
-            logger.info("Executing Step 1: Converting affiliate links & updating Linktree blocks...")
-            affiliate_res = self.affiliate_engine.batch_process_outfit(product_items)
-            report["steps"]["affiliate"] = affiliate_res
-            logger.info(f"Generated {len(affiliate_res['items'])} monetized tracking links.")
-
-        # Step 2: Official Wan2.1 I2V Diffusers Pipeline (True Generative Motion)
-        video_res = {}
-        final_video_path = None
-        if self.agent_config.enable_generative_video:
-            logger.info("Executing Step 2: Building Wan2.1 I2V Diffusers specification...")
-            prompt = video_motion_prompt or (
-                "A photorealistic 9:16 vertical fashion reel, young Indian woman with long dark hair "
-                f"wearing {outfit_prompt}, walking gracefully forward, natural clothing physics, "
-                "fluid body movement, realistic skin texture, cinematic lighting."
-            )
-            base_dress = product_items[0].get("image_path", "assets/dress/lakdata_Women_Tiered_Pur_hd_angle_01.jpg")
-            
-            spec = self.video_generator.build_wan21_spec(
-                reference_image_path=base_dress,
-                motion_prompt=prompt,
-                num_frames=81,
-                width=720,
-                height=1280,
-                fps=16
-            )
-            final_video_path = self.video_generator.execute_pipeline(spec)
-            video_res = {
-                "status": "WAN21_DIFFUSION_READY",
-                "framework": spec["framework"],
-                "model_id": spec["model_id"],
-                "video_path": final_video_path,
-                "frames": 81,
-                "fps": 16,
-                "clean_footage_verified": True
-            }
-            report["steps"]["video_generation"] = video_res
+def parse_args():
+    p = argparse.ArgumentParser(description="Anaya Sharma AI Influencer Agent")
+    p.add_argument(
+        "--build-spec",
+        action="store_true",
+        default=True,
+        help="Build the cloud notebook run spec JSON (default: True)",
+    )
+    p.add_argument(
+        "--image",
+        type=str,
+        default="assets/dress/lakdata_Women_Tiered_Pur_hd_angle_01.jpg",
+        help="Path to the Anaya outfit reference image",
+    )
+    p.add_argument(
+        "--output-dir",
+        type=str,
+        default="output",
+        help="Directory for spec JSON and downloaded video",
+    )
+    p.add_argument(
+        "--skip-affiliate",
+        action="store_true",
+        default=True,
+        help="Skip affiliate link generation (default: skip)",
+    )
+    p.add_argument(
+        "--skip-publish",
+        action="store_true",
+        default=True,
+        help="Skip Instagram publishing (default: skip; enable only after"
+             " verifying the generated video)",
+    )
+    return p.parse_args()
 
 
-        # Step 3: Social Media Publishing (Instagram Reels)
-        if self.agent_config.enable_social_distribution and final_video_path:
-            logger.info("Executing Step 3: Staging and publishing Reel to Instagram...")
-            self.instagram_publisher.login()
-            caption = self.instagram_publisher.build_hinglish_caption(outfit_prompt)
-            publish_res = self.instagram_publisher.publish_reel(
-                video_path=final_video_path,
-                caption=caption,
-                thumbnail_path=self.agent_config.avatar_image_path
-            )
-            report["steps"]["social_publishing"] = publish_res
+def run_build_spec(image_path: str, output_dir: str) -> dict:
+    """Builds and saves the cloud notebook execution specification."""
+    logger.info("Building cloud notebook run specification...")
 
-        logger.info("=== Pipeline Run Finished Successfully! ===")
-        return report
+    # Import here so other modules do not need GPU deps
+    sys.path.insert(0, str(BASE_DIR))
+    from tools.cloud_video_generator import build_run_spec, print_run_instructions
+
+    try:
+        spec = build_run_spec(
+            reference_image_path=image_path,
+            output_dir=output_dir,
+        )
+        print_run_instructions(spec)
+        return spec
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+
+def run_affiliate(spec: dict) -> dict:
+    """Generates EarnKaro affiliate links for the outfit."""
+    logger.info("Running affiliate link generation...")
+    try:
+        from tools.affiliate_engine import AffiliateEngine
+        engine = AffiliateEngine()
+        sample_products = [
+            {
+                "title": "Tiered Purple Festive Anarkali Kurta Set",
+                "url": "https://www.myntra.com/dresses/tiered-purple-festive-anarkali/1049281",
+                "category": "Ethnic Wear",
+                "image_path": spec["conditioning"]["reference_image"],
+            },
+        ]
+        result = engine.batch_process_outfit(sample_products)
+        logger.info(f"Affiliate: {len(result.get('items', []))} links generated.")
+        return result
+    except Exception as e:
+        logger.warning(f"Affiliate step failed (non-fatal): {e}")
+        return {"error": str(e)}
+
+
+def run_publish(video_path: str) -> dict:
+    """Publishes the validated video to Instagram Reels."""
+    if not Path(video_path).exists():
+        logger.error(
+            f"Video file not found: {video_path}\n"
+            "  Run the Kaggle notebook first and download the output video."
+        )
+        return {"error": "video_not_found", "path": video_path}
+
+    logger.info("Running Instagram publisher...")
+    try:
+        from tools.instagram_publisher import InstagramPublisher
+        publisher = InstagramPublisher()
+        publisher.login()
+        caption = publisher.build_hinglish_caption("purple tiered anarkali dress")
+        result = publisher.publish_reel(video_path=video_path, caption=caption)
+        logger.info("Instagram publish complete.")
+        return result
+    except Exception as e:
+        logger.warning(f"Publish step failed: {e}")
+        return {"error": str(e)}
 
 
 def main():
-    """Initializes and runs the Anaya Sharma Agent workflow."""
-    print("=" * 68)
-    print("  ANAYA SHARMA - AI INFLUENCER AUTONOMOUS WORKSPACE (v2.2.0)")
-    print("=" * 68)
+    args = parse_args()
 
-    agent_cfg = LocalAgentConfig(
-        agent_name="Anaya Sharma Agent",
-        enable_affiliate=True,
-        enable_generative_video=True,
-        enable_social_distribution=True
-    )
-    agent = AnayaAgent(agent_config=agent_cfg)
+    print("=" * 70)
+    print("  ANAYA SHARMA — AI INFLUENCER AGENT  (v3.0)")
+    print("=" * 70)
 
-    # Active outfit look: Women Tiered Purple Festive Dress Showcase
-    sample_outfit = "Women Tiered Purple Festive Kurta & Dupatta Set"
-    sample_products = [
-        {
-            "title": "Tiered Purple Festive Anarkali Kurta Set",
-            "url": "https://www.myntra.com/dresses/tiered-purple-festive-anarkali/1049281",
-            "category": "Ethnic Wear",
-            "image_path": "assets/dress/lakdata_Women_Tiered_Pur_hd_angle_01.jpg"
-        },
-        {
-            "title": "Antique Gold Kundan Earrings",
-            "url": "https://www.ajio.com/jewellery/kundan-earrings/827192",
-            "category": "Jewellery"
-        },
-        {
-            "title": "Zari Embroidered Juttis",
-            "url": "https://www.amazon.in/dp/B08XYZ5678",
-            "category": "Footwear"
+    report = {"steps": {}}
+
+    # Step 1: Always build the cloud spec first
+    if args.build_spec:
+        spec = run_build_spec(args.image, args.output_dir)
+        report["steps"]["spec"] = {
+            "status": "SPEC_WRITTEN",
+            "model": spec["model"]["model_id"],
+            "spec_file": str(Path(args.output_dir) / "run_report.json"),
         }
-    ]
 
-    result = agent.run_pipeline(
-        outfit_prompt=sample_outfit,
-        product_items=sample_products,
-        video_motion_prompt=(
-            "Cinematic 9:16 vertical fashion reel of young Indian woman Anaya Sharma presenting a tiered purple festive kurta dress, "
-            "walking gracefully toward the camera, relaxed elegant posture, natural hair movement, realistic skin texture, "
-            "smooth clothing physics, photorealistic warm daylight, 4k"
-        )
-    )
+    # Step 2: Optional affiliate generation
+    if not args.skip_affiliate and args.build_spec:
+        report["steps"]["affiliate"] = run_affiliate(spec)
 
-    print("\n--- Pipeline Execution Report ---")
-    print(json.dumps(result, indent=2))
+    # Step 3: Optional publish (only after downloading real cloud video)
+    if not args.skip_publish:
+        import pipeline_config as cfg
+        video_path = str(Path(args.output_dir) / cfg.OUTPUT_FILENAME)
+        report["steps"]["publish"] = run_publish(video_path)
+
+    print("\n--- Agent Report ---")
+    print(json.dumps(report, indent=2))
+    print()
+    logger.info("Done. Next step: run the Kaggle notebook (see instructions above).")
 
 
 if __name__ == "__main__":
